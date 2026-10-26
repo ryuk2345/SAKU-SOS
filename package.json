@@ -1,0 +1,41 @@
+{
+  "name": "whatsapp-emotional-support-bot",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Backend esqueleto en TypeScript para bot de WhatsApp de apoyo emocional con Express, BullMQ, PostgreSQL y Claude",
+  "main": "dist/server.js",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "db:migrate": "tsx src/db/migrate.ts"
+  },
+  "keywords": [
+    "whatsapp",
+    "bullmq",
+    "claude",
+    "anthropic",
+    "postgres",
+    "typescript",
+    "express"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "bullmq": "^5.41.0",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "ioredis": "^5.5.0",
+    "pg": "^8.13.3",
+    "twilio": "^6.2.0",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.13.9",
+    "@types/pg": "^8.11.11",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2"
+  }
+}
