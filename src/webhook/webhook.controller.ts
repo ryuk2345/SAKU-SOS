@@ -39,8 +39,10 @@ export const webhookController = {
         return;
       }
 
-      const sender = msg.sender?.phone || msg.source;
-      const senderName = msg.sender?.name || '';
+      // Preferimos el teléfono real; si el usuario adoptó un username de WhatsApp y Gupshup no
+      // tiene su número, cae al BSUID (sender.userId, ej. "PE.139...") como identificador.
+      const sender = msg.sender?.phone || msg.source || msg.sender?.userId;
+      const senderName = msg.sender?.name || msg.sender?.username || '';
       const messageSid = msg.id;
 
       if (!sender || !messageSid) {

@@ -23,6 +23,15 @@ function normalizePhone(phone: string): string {
   return phone.replace(/^whatsapp:/, '').replace(/[^0-9]/g, '');
 }
 
+/**
+ * Un BSUID (Business-Scoped User ID) de WhatsApp tiene forma "XX.<dígitos>" (ej. "PE.139...").
+ * Se usa como identificador cuando el usuario adoptó un username de WhatsApp y no compartió
+ * su teléfono real. Doc: https://support.gupshup.io/hc/en-us/articles/55873677826713
+ */
+function isBsuid(id: string): boolean {
+  return /^[A-Za-z]{2}\.\d+$/.test(id);
+}
+
 export const gupshupClient = {
   /**
    * Envía un mensaje de texto al usuario a través de la API de Gupshup.
@@ -31,15 +40,24 @@ export const gupshupClient = {
   async sendMessage(params: SendWhatsAppMessageParams): Promise<GupshupSendResult> {
     const { to, text } = params;
 
-    const destination = normalizePhone(to);
+    const sendingToBsuid = isBsuid(to);
+    const destination = sendingToBsuid ? '' : normalizePhone(to);
     const source = normalizePhone(env.GUPSHUP_SOURCE_NUMBER);
 
-    logger.info('GupshupClient', `Enviando mensaje a ${destination} desde ${source} (${text.length} caracteres)...`);
+    logger.info(
+      'GupshupClient',
+      `Enviando mensaje a ${sendingToBsuid ? `BSUID ${to}` : destination} desde ${source} (${text.length} caracteres)...`
+    );
 
     const body = new URLSearchParams();
     body.set('channel', 'whatsapp');
     body.set('source', source);
-    body.set('destination', destination);
+    if (sendingToBsuid) {
+      // Usuario sin teléfono disponible (adoptó username de WhatsApp): se envía por BSUID.
+      body.set('userId', to);
+    } else {
+      body.set('destination', destination);
+    }
     body.set('src.name', env.GUPSHUP_APP_NAME);
     body.set('message', JSON.stringify({ type: 'text', text }));
 
@@ -62,7 +80,7 @@ export const gupshupClient = {
       if (!response.ok || data.status !== 'submitted') {
         logger.error(
           'GupshupClient',
-          `Error al enviar mensaje vía Gupshup a ${destination}. HTTP ${response.status}. Respuesta: ${JSON.stringify(data)}`
+          `Error al enviar mensaje vía Gupshup a ${sendingToBsuid ? to : destination}. HTTP ${response.status}. Respuesta: ${JSON.stringify(data)}`
         );
         throw new Error(`Gupshup send failed: HTTP ${response.status} - ${data.message || JSON.stringify(data)}`);
       }
@@ -71,11 +89,11 @@ export const gupshupClient = {
       return {
         sid: data.messageId || '',
         status: data.status || 'submitted',
-        to: destination,
+        to: sendingToBsuid ? to : destination,
         from: source,
       };
     } catch (error) {
-      logger.error('GupshupClient', `Error al enviar mensaje vía Gupshup a ${destination}`, error);
+      logger.error('GupshupClient', `Error al enviar mensaje vía Gupshup a ${sendingToBsuid ? to : destination}`, error);
       throw error;
     }
   },

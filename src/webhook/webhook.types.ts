@@ -7,10 +7,16 @@
  */
 
 export interface GupshupSender {
-  phone: string; // Ej: "51984424719" (sin '+', sin prefijo whatsapp:)
+  phone?: string; // Ej: "51984424719" (sin '+', sin prefijo whatsapp:). Puede faltar si el usuario usa username de WhatsApp (ver BSUID abajo).
   name?: string;
   country_code?: string;
   dial_code?: string;
+  // WhatsApp "Business-Scoped User ID" (BSUID): identificador opaco ("PE.139...") que Meta/Gupshup
+  // envía en vez del número real cuando el usuario adoptó un username de WhatsApp y no compartió
+  // su teléfono. Hay que usarlo como fallback para identificar y responder al usuario.
+  // Doc: https://support.gupshup.io/hc/en-us/articles/55873677826713-Username-Business-Scoped-User-ID
+  userId?: string;
+  username?: string;
 }
 
 export interface GupshupTextPayload {
