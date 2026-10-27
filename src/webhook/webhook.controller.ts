@@ -29,7 +29,9 @@ export const webhookController = {
       const body = req.body as GupshupWebhookBody;
 
       if (!body || body.type !== 'message') {
-        logger.debug('Webhook:Gupshup', `Evento ignorado (type=${body?.type ?? 'desconocido'}).`);
+        // Log completo (línea única) para poder ver detalle de eventos de estado
+        // (sent/delivered/failed) mientras diagnosticamos entregas de WhatsApp.
+        logger.info('Webhook:Gupshup', `Evento ignorado (type=${body?.type ?? 'desconocido'}): ${JSON.stringify(body)}`);
         return;
       }
 
