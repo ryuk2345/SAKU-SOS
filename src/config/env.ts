@@ -13,7 +13,7 @@ const envSchema = z.object({
   GUPSHUP_SOURCE_NUMBER: z.string().min(1, 'GUPSHUP_SOURCE_NUMBER es requerido (ej. 51984424719)'),
   GUPSHUP_APP_ID: z.string().optional(),
 
-  // Twilio WhatsApp API (legado, ya no se usa para enviar/recibir)
+  // Twilio WhatsApp API (legado, ya no se usa)
   TWILIO_ACCOUNT_SID: z.string().optional(),
   TWILIO_AUTH_TOKEN: z.string().optional(),
   TWILIO_WHATSAPP_NUMBER: z.string().optional(),
@@ -23,8 +23,13 @@ const envSchema = z.object({
   WHATSAPP_API_TOKEN: z.string().optional(),
   WHATSAPP_PHONE_NUMBER_ID: z.string().optional(),
 
-  // Anthropic / Claude
-  ANTHROPIC_API_KEY: z.string().min(1, 'ANTHROPIC_API_KEY es requerido'),
+  // Gemini (Google AI Studio) - motor conversacional activo (API gratuita, sin tarjeta)
+  GEMINI_API_KEY: z.string().min(1, 'GEMINI_API_KEY es requerido (consíguelo gratis en aistudio.google.com)'),
+  GEMINI_RISK_MODEL: z.string().default('gemini-2.5-flash'),
+  GEMINI_CHAT_MODEL: z.string().default('gemini-2.5-flash'),
+
+  // Anthropic / Claude (legado - se usará si en el futuro se vuelve a Claude)
+  ANTHROPIC_API_KEY: z.string().optional(),
   CLAUDE_RISK_MODEL: z.string().default('claude-3-5-haiku-20241022'),
   CLAUDE_CHAT_MODEL: z.string().default('claude-3-5-sonnet-20241022'),
 

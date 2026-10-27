@@ -1,4 +1,3 @@
-import Anthropic from '@anthropic-ai/sdk';
 import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
 import { buildRiskEvaluationPrompt, RiskLevel } from '../prompts/risk.prompt.js';
@@ -22,35 +21,86 @@ export interface GenerateChatResponseParams {
   userMessage: string;
 }
 
-const anthropic = new Anthropic({
-  apiKey: env.ANTHROPIC_API_KEY,
-});
+/**
+ * Cliente del motor conversacional.
+ *
+ * NOTA: originalmente llamaba a la API de Anthropic (Claude). Se migró a la API
+ * gratuita de Gemini (Google AI Studio) porque el piloto todavía no tiene una
+ * API key de pago de Anthropic. El nombre del archivo/export se mantiene
+ * (`claudeClient`) para no tener que tocar el resto del código (worker, etc.).
+ * Si en el futuro se vuelve a Anthropic, solo hay que reescribir este archivo.
+ */
+
+const GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
+
+interface GeminiContent {
+  role: 'user' | 'model';
+  parts: { text: string }[];
+}
+
+async function callGemini(params: {
+  model: string;
+  contents: GeminiContent[];
+  systemInstruction?: string;
+  temperature: number;
+  maxOutputTokens: number;
+}): Promise<string> {
+  const { model, contents, systemInstruction, temperature, maxOutputTokens } = params;
+
+  const url = `${GEMINI_BASE_URL}/${model}:generateContent?key=${env.GEMINI_API_KEY}`;
+
+  const body: Record<string, unknown> = {
+    contents,
+    generationConfig: {
+      temperature,
+      maxOutputTokens,
+    },
+  };
+
+  if (systemInstruction) {
+    body.systemInstruction = { parts: [{ text: systemInstruction }] };
+  }
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
+  const data = (await response.json().catch(() => ({}))) as any;
+
+  if (!response.ok) {
+    const message = data?.error?.message || JSON.stringify(data);
+    throw new Error(`Gemini API error: HTTP ${response.status} - ${message}`);
+  }
+
+  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (typeof text !== 'string') {
+    // Puede pasar si Gemini bloqueó la respuesta (finishReason SAFETY, etc.)
+    const finishReason = data?.candidates?.[0]?.finishReason;
+    throw new Error(`Gemini no devolvió texto. finishReason: ${finishReason || 'desconocido'}`);
+  }
+
+  return text.trim();
+}
 
 export const claudeClient = {
   /**
-   * Paso 3a: Clasifica el nivel de riesgo del mensaje usando Claude Haiku.
+   * Paso 3a: Clasifica el nivel de riesgo del mensaje usando Gemini (modelo rápido/liviano).
    */
   async classifyRisk(userMessage: string): Promise<RiskClassificationResult> {
-    logger.info('ClaudeClient:Risk', `Clasificando riesgo con modelo ${env.CLAUDE_RISK_MODEL}...`);
+    logger.info('GeminiClient:Risk', `Clasificando riesgo con modelo ${env.GEMINI_RISK_MODEL}...`);
 
     try {
-      const response = await anthropic.messages.create({
-        model: env.CLAUDE_RISK_MODEL,
-        max_tokens: 150,
-        temperature: 0.0, // Consistencia máxima para clasificación
-        messages: [
-          {
-            role: 'user',
-            content: buildRiskEvaluationPrompt(userMessage),
-          },
-        ],
+      const rawText = await callGemini({
+        model: env.GEMINI_RISK_MODEL,
+        contents: [{ role: 'user', parts: [{ text: buildRiskEvaluationPrompt(userMessage) }] }],
+        temperature: 0.0,
+        maxOutputTokens: 150,
       });
 
-      const textBlock = response.content.find((block) => block.type === 'text');
-      const rawText = textBlock && 'text' in textBlock ? textBlock.text.trim() : '';
-
       // Limpiar posibles bloques de código markdown ```json ... ```
-      const cleanedJson = rawText.replace(/^```json\s*/i, '').replace(/\s*```$/, '').trim();
+      const cleanedJson = rawText.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/, '').trim();
 
       try {
         const parsed = JSON.parse(cleanedJson);
@@ -59,10 +109,7 @@ export const claudeClient = {
           ? parsed.risk_level
           : 'moderado'; // Si no coincide exactamente, asumimos moderado por precaución
 
-        logger.info(
-          'ClaudeClient:Risk',
-          `Resultado de riesgo: [${risk_level.toUpperCase()}]`
-        );
+        logger.info('GeminiClient:Risk', `Resultado de riesgo: [${risk_level.toUpperCase()}]`);
 
         return {
           risk_level,
@@ -70,7 +117,7 @@ export const claudeClient = {
         };
       } catch (jsonErr) {
         logger.warn(
-          'ClaudeClient:Risk',
+          'GeminiClient:Risk',
           `Fallo al parsear JSON del clasificador. Salida cruda: "${rawText}". Asignando riesgo 'moderado' por precaución.`
         );
         return {
@@ -79,7 +126,7 @@ export const claudeClient = {
         };
       }
     } catch (error) {
-      logger.error('ClaudeClient:Risk', 'Error llamando a Anthropic para clasificación de riesgo', error);
+      logger.error('GeminiClient:Risk', 'Error llamando a Gemini para clasificación de riesgo', error);
       // En caso de fallo de red/API, se clasifica como 'moderado' por salvaguarda
       return {
         risk_level: 'moderado',
@@ -95,56 +142,48 @@ export const claudeClient = {
   async generateChatResponse(params: GenerateChatResponseParams): Promise<string> {
     const { riskLevel, history, userMessage } = params;
     logger.info(
-      'ClaudeClient:Chat',
-      `Generando respuesta con modelo ${env.CLAUDE_CHAT_MODEL} (Riesgo: ${riskLevel}, Historial: ${history.length} mensajes)...`
+      'GeminiClient:Chat',
+      `Generando respuesta con modelo ${env.GEMINI_CHAT_MODEL} (Riesgo: ${riskLevel}, Historial: ${history.length} mensajes)...`
     );
 
     const systemPrompt = buildChatSystemPrompt(riskLevel);
 
-    // Formatear mensajes asegurando formato compatible con la API de Anthropic
-    const formattedMessages: Anthropic.MessageParam[] = [];
+    // Formatear mensajes al formato de Gemini (role 'model' en vez de 'assistant')
+    const formattedContents: GeminiContent[] = [];
 
     for (const item of history) {
       if (!item.content || !item.content.trim()) continue;
+      const geminiRole: 'user' | 'model' = item.role === 'assistant' ? 'model' : 'user';
 
-      const lastMsg = formattedMessages[formattedMessages.length - 1];
-      if (lastMsg && lastMsg.role === item.role) {
-        lastMsg.content = `${lastMsg.content}\n\n${item.content}`;
+      const last = formattedContents[formattedContents.length - 1];
+      if (last && last.role === geminiRole) {
+        last.parts[0].text = `${last.parts[0].text}\n\n${item.content}`;
       } else {
-        formattedMessages.push({
-          role: item.role,
-          content: item.content,
-        });
+        formattedContents.push({ role: geminiRole, parts: [{ text: item.content }] });
       }
     }
 
     // Agregar el mensaje actual del usuario al final
-    const lastMsg = formattedMessages[formattedMessages.length - 1];
-    if (lastMsg && lastMsg.role === 'user') {
-      lastMsg.content = `${lastMsg.content}\n\n${userMessage}`;
+    const last = formattedContents[formattedContents.length - 1];
+    if (last && last.role === 'user') {
+      last.parts[0].text = `${last.parts[0].text}\n\n${userMessage}`;
     } else {
-      formattedMessages.push({
-        role: 'user',
-        content: userMessage,
-      });
+      formattedContents.push({ role: 'user', parts: [{ text: userMessage }] });
     }
 
     try {
-      const response = await anthropic.messages.create({
-        model: env.CLAUDE_CHAT_MODEL,
-        max_tokens: 1024,
+      const botResponse = await callGemini({
+        model: env.GEMINI_CHAT_MODEL,
+        contents: formattedContents,
+        systemInstruction: systemPrompt,
         temperature: 0.7,
-        system: systemPrompt,
-        messages: formattedMessages,
+        maxOutputTokens: 1024,
       });
 
-      const textBlock = response.content.find((block) => block.type === 'text');
-      const botResponse = textBlock && 'text' in textBlock ? textBlock.text.trim() : '';
-
-      logger.info('ClaudeClient:Chat', `Respuesta generada con éxito (${botResponse.length} caracteres)`);
+      logger.info('GeminiClient:Chat', `Respuesta generada con éxito (${botResponse.length} caracteres)`);
       return botResponse;
     } catch (error) {
-      logger.error('ClaudeClient:Chat', 'Error al llamar a Anthropic para generar respuesta', error);
+      logger.error('GeminiClient:Chat', 'Error al llamar a Gemini para generar respuesta', error);
       throw error;
     }
   },
